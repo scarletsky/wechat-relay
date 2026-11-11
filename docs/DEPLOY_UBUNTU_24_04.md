@@ -78,6 +78,26 @@ RELAY_TOKEN=<operator-generated-random-token>
 
 Do not add quotes unless they are part of the actual secret. Do not reuse another service's token.
 
+### Optional: several Official Accounts
+
+To serve more than one Official Account, leave the three credential lines out of `wechat-relay.env` and create a root-only accounts file instead. Generate a separate token for each account with `openssl rand -base64 48`.
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/wechat-relay/accounts.json
+sudoedit /etc/wechat-relay/accounts.json
+```
+
+Use the JSON format shown in the README. After installing the unit in step 3, add the drop-in that hands the file to the service as a systemd credential:
+
+```bash
+sudo install -d -m 0755 /etc/systemd/system/wechat-relay.service.d
+sudo install -m 0644 deploy/wechat-relay-accounts.conf /etc/systemd/system/wechat-relay.service.d/accounts.conf
+sudo systemctl daemon-reload
+sudo systemctl restart wechat-relay.service
+```
+
+systemd reads the file as root and exposes a copy that only the service's dynamic user can read, so the file itself stays `0600 root:root`. Add the relay's fixed IPv4 to every account's WeChat allowlist. To change accounts later, edit the file and restart the service.
+
 The bounded idempotency defaults are 10,000 metadata rows and seven days for automatic retention of `failed_safe` rows. Optional overrides are:
 
 ```dotenv
@@ -117,6 +137,8 @@ header = "Authorization: Bearer ${RELAY_TOKEN}"
 EOF
 exit
 ```
+
+With an accounts file, check each account separately: run `read -rs RELAY_TOKEN` in the root shell, paste that account's token, then run the same `curl` command.
 
 If readiness fails, inspect only the structured service metadata. Do not increase logging to include headers, request bodies, upstream URLs, or secrets.
 

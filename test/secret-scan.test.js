@@ -10,6 +10,8 @@ test("secret scanner catches common credential and private-host artifacts", () =
     ["WECHAT_APP_SECRET=" + longToken, "nonempty-wechat_app_secret"],
     ["Authorization: Bearer " + longToken, "literal-bearer-token"],
     [JSON.stringify({ access_token: longToken }), "literal-secret-field"],
+    [JSON.stringify({ relayToken: longToken }), "literal-secret-field"],
+    [JSON.stringify({ appSecret: longToken }), "literal-secret-field"],
     ["wx" + "1".repeat(16), "wechat-app-id"],
     ["server=" + [8, 8, 8, 8].join("."), "public-ipv4"],
     ["/" + ["Users", "private-user", "secret"].join("/"), "personal-absolute-path"],

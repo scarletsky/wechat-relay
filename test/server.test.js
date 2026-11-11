@@ -365,3 +365,63 @@ test("early authentication rejection closes an unread streamed body", async (t) 
   });
   assert.deepEqual(result, { statusCode: 401, connection: "close" });
 });
+
+test("each relay token routes to its own Official Account", async (t) => {
+  const mainToken = "m".repeat(48);
+  const blogToken = "q".repeat(48);
+  const upstreamCalls = [];
+  const fixture = await withService(t, {
+    config: {
+      accounts: [
+        { name: "main", appId: "main-app-id", appSecret: "main-app-secret", relayToken: mainToken },
+        { name: "blog", appId: "blog-app-id", appSecret: "blog-app-secret", relayToken: blogToken },
+      ],
+    },
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      upstreamCalls.push(parsed);
+      if (parsed.pathname === "/cgi-bin/token") {
+        return jsonResponse({ access_token: `access-${parsed.searchParams.get("appid")}`, expires_in: 7_200 });
+      }
+      return jsonResponse({ errcode: 0, media_id: "private-draft-id" });
+    },
+  });
+  const createDraft = (relayToken) => fetch(`${fixture.baseUrl}/wechat/draft/add`, {
+    method: "POST",
+    headers: authHeaders(fixture.config, {
+      "Content-Type": "application/json",
+      "Idempotency-Key": "shared-draft-key",
+    }, relayToken),
+    body: JSON.stringify({ articles: [{ title: "same" }] }),
+  });
+
+  assert.equal((await createDraft(mainToken)).status, 200);
+  assert.equal((await createDraft(blogToken)).status, 200);
+  const replay = await createDraft(blogToken);
+  assert.equal(replay.status, 409);
+  assert.equal((await replay.json()).error.code, "idempotency_replay_blocked");
+
+  const operations = upstreamCalls.filter((url) => url.pathname === "/cgi-bin/draft/add");
+  assert.deepEqual(
+    operations.map((url) => url.searchParams.get("access_token")),
+    ["access-main-app-id", "access-blog-app-id"],
+  );
+  assert.equal(fixture.service.store.get("main\0shared-draft-key").stage, "completed");
+  assert.equal(fixture.service.store.get("blog\0shared-draft-key").stage, "completed");
+  assert.equal(fixture.service.store.get("shared-draft-key"), null);
+
+  const ready = await fetch(`${fixture.baseUrl}/v1/ready`, {
+    headers: authHeaders(fixture.config, {}, blogToken),
+  });
+  assert.equal(ready.status, 200);
+
+  const records = fixture.logs.join("").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(
+    records.filter((record) => record.event === "request.complete").map((record) => record.account),
+    ["main", "blog", "blog", "blog"],
+  );
+  const logText = fixture.logs.join("");
+  for (const forbidden of [mainToken, blogToken, "main-app-secret", "blog-app-secret", "main-app-id"]) {
+    assert.equal(logText.includes(forbidden), false);
+  }
+});

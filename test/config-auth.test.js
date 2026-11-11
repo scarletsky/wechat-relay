@@ -2,6 +2,9 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { createAuthenticator } from "../src/auth.js";
 import { assertNoBody } from "../src/body.js";
@@ -37,6 +40,83 @@ test("executable exits before listening when credentials are absent", () => {
   assert.match(result.stderr, /"code":"missing_WECHAT_APP_ID"/u);
 });
 
+function writeAccountsFile(t, content) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-relay-accounts-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, "accounts.json");
+  fs.writeFileSync(filename, typeof content === "string" ? content : JSON.stringify(content));
+  return filename;
+}
+
+function validAccounts() {
+  return [
+    { name: "main", appId: "main-app-id", appSecret: "main-app-secret", relayToken: "m".repeat(48) },
+    { name: "blog", appId: "blog-app-id", appSecret: "blog-app-secret", relayToken: "q".repeat(48) },
+  ];
+}
+
+test("legacy environment credentials become the default account", () => {
+  assert.deepEqual(loadConfig(validEnv()).accounts, [{
+    name: "default",
+    appId: "test-app-id",
+    appSecret: "test-app-secret",
+    relayToken: "r".repeat(48),
+  }]);
+});
+
+test("accounts file supplies several accounts", (t) => {
+  const filename = writeAccountsFile(t, validAccounts());
+  const config = loadConfig({ WECHAT_ACCOUNTS_FILE: filename, DB_PATH: ":memory:" });
+  assert.deepEqual(config.accounts, validAccounts());
+  assert.equal(Object.isFrozen(config.accounts[0]), true);
+});
+
+test("accounts file and legacy credentials are mutually exclusive", (t) => {
+  const filename = writeAccountsFile(t, validAccounts());
+  for (const name of ["WECHAT_APP_ID", "WECHAT_APP_SECRET", "RELAY_TOKEN"]) {
+    assert.throws(
+      () => loadConfig({ WECHAT_ACCOUNTS_FILE: filename, [name]: validEnv()[name] }),
+      { code: "ambiguous_account_config" },
+      name,
+    );
+  }
+});
+
+test("accounts file fails closed without echoing its contents", (t) => {
+  const secret = "s".repeat(48);
+  const load = (content) => loadConfig({ WECHAT_ACCOUNTS_FILE: writeAccountsFile(t, content) });
+  const cases = [
+    [`[{"name":"main","appSecret":"${secret}"`, "invalid_WECHAT_ACCOUNTS_FILE"],
+    [{}, "invalid_WECHAT_ACCOUNTS_FILE"],
+    [[], "invalid_WECHAT_ACCOUNTS_FILE"],
+    [["main"], "invalid_account"],
+    [[{ ...validAccounts()[0], appSecert: secret }], "unknown_account_field"],
+    [[{ ...validAccounts()[0], appSecret: "" }], "missing_account_appSecret"],
+    [[{ ...validAccounts()[0], appId: 1 }], "missing_account_appId"],
+    [[{ ...validAccounts()[0], name: "Main" }], "invalid_account_name"],
+    [[{ ...validAccounts()[0], name: "a".repeat(33) }], "invalid_account_name"],
+    [[{ ...validAccounts()[0], relayToken: "x".repeat(42) }], "invalid_RELAY_TOKEN_length"],
+    [[validAccounts()[0], { ...validAccounts()[1], name: "main" }], "duplicate_account_name"],
+    [[validAccounts()[0], { ...validAccounts()[1], appId: "main-app-id" }], "duplicate_account_appId"],
+    [
+      [validAccounts()[0], { ...validAccounts()[1], relayToken: "m".repeat(48) }],
+      "duplicate_account_relayToken",
+    ],
+    [" ".repeat(64 * 1024 + 1), "invalid_WECHAT_ACCOUNTS_FILE_size"],
+  ];
+  for (const [content, code] of cases) {
+    assert.throws(
+      () => load(content),
+      (error) => error.code === code && !error.message.includes(secret),
+      code,
+    );
+  }
+  assert.throws(
+    () => loadConfig({ WECHAT_ACCOUNTS_FILE: path.join(os.tmpdir(), "wechat-relay-missing", "accounts.json") }),
+    { code: "unreadable_WECHAT_ACCOUNTS_FILE" },
+  );
+});
+
 test("relay token must encode at least 32 random bytes", () => {
   assert.throws(
     () => loadConfig({ ...validEnv(), RELAY_TOKEN: "x".repeat(31) }),
@@ -46,12 +126,12 @@ test("relay token must encode at least 32 random bytes", () => {
     () => loadConfig({ ...validEnv(), RELAY_TOKEN: "z".repeat(42) }),
     { code: "invalid_RELAY_TOKEN_length" },
   );
-  assert.equal(loadConfig({ ...validEnv(), RELAY_TOKEN: "z".repeat(43) }).relayToken.length, 43);
+  assert.equal(loadConfig({ ...validEnv(), RELAY_TOKEN: "z".repeat(43) }).accounts[0].relayToken.length, 43);
   assert.throws(
     () => loadConfig({ ...validEnv(), RELAY_TOKEN: "a".repeat(63) }),
     { code: "invalid_RELAY_TOKEN_length" },
   );
-  assert.equal(loadConfig({ ...validEnv(), RELAY_TOKEN: "a".repeat(64) }).relayToken.length, 64);
+  assert.equal(loadConfig({ ...validEnv(), RELAY_TOKEN: "a".repeat(64) }).accounts[0].relayToken.length, 64);
   assert.throws(
     () => loadConfig({ ...validEnv(), RELAY_TOKEN: "密".repeat(32) }),
     { code: "invalid_RELAY_TOKEN" },
@@ -148,7 +228,7 @@ test("status endpoints reject declared or streamed request bodies", () => {
 
 test("authentication accepts exactly one correct credential header", () => {
   const token = "a".repeat(48);
-  const authenticate = createAuthenticator(token);
+  const authenticate = createAuthenticator([{ name: "default", relayToken: token }]);
   assert.doesNotThrow(() => authenticate({ headers: { authorization: `Bearer ${token}` } }));
   assert.doesNotThrow(() => authenticate({ headers: { "x-relay-token": token } }));
   assert.throws(() => authenticate({ headers: { authorization: "Bearer wrong" } }), { statusCode: 401 });
@@ -173,5 +253,16 @@ test("authentication accepts exactly one correct credential header", () => {
       rawHeaders: ["Authorization", `Bearer ${token}`, "Authorization", "Bearer other"],
     }),
     { statusCode: 400, code: "ambiguous_authentication" },
+  );
+});
+
+test("authentication returns the account that owns the token", () => {
+  const accounts = validAccounts();
+  const authenticate = createAuthenticator(accounts);
+  assert.equal(authenticate({ headers: { authorization: `Bearer ${"m".repeat(48)}` } }), accounts[0]);
+  assert.equal(authenticate({ headers: { "x-relay-token": "q".repeat(48) } }), accounts[1]);
+  assert.throws(
+    () => authenticate({ headers: { authorization: `Bearer ${"r".repeat(48)}` } }),
+    { statusCode: 401, code: "unauthorized" },
   );
 });

@@ -18,6 +18,7 @@ data/
 *.db-shm
 *.db-wal
 .env
+accounts.json
 .env.*
 !.env.example
 *.log

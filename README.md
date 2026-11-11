@@ -14,7 +14,8 @@ The relay creates or reads drafts only through the four documented compatibility
 
 ## Security model
 
-- The Node process refuses to start unless `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, and `RELAY_TOKEN` are all present.
+- The Node process refuses to start unless `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, and `RELAY_TOKEN` are all present, or `WECHAT_ACCOUNTS_FILE` names a valid accounts file.
+- One relay can serve several Official Accounts. Each account has its own relay token, and the token alone selects the account, so a stolen token reaches only its own account. See [Several Official Accounts](#several-official-accounts).
 - `RELAY_TOKEN` must encode at least 32 cryptographically random bytes (at least 43 base64/base64url characters or 64 hex characters). Do not invent a memorable password.
 - The process binds only to `127.0.0.1` or `::1`. Tailscale Serve or Caddy is the network boundary.
 - `/v1/health` is public and returns only `{"ok":true}`. `/v1/ready` is authenticated and checks SQLite plus WeChat credential/IP readiness.
@@ -51,6 +52,32 @@ npm start
 ```
 
 The empty [.env.example](.env.example) is a key list, not a working configuration. Never commit a populated environment file.
+
+## Several Official Accounts
+
+Without `WECHAT_ACCOUNTS_FILE`, the three legacy variables define one account named `default`. To serve several accounts, put them in a root-only JSON file and point `WECHAT_ACCOUNTS_FILE` at it instead:
+
+```json
+[
+  {
+    "name": "main",
+    "appId": "<operator-supplied-app-id>",
+    "appSecret": "<operator-supplied-app-secret>",
+    "relayToken": "<operator-generated-random-token>"
+  },
+  {
+    "name": "blog",
+    "appId": "<operator-supplied-app-id>",
+    "appSecret": "<operator-supplied-app-secret>",
+    "relayToken": "<operator-generated-random-token>"
+  }
+]
+```
+
+- `name` is 1-32 lowercase letters, digits, `_`, or `-`. It appears in logs and namespaces idempotency keys, so keep it stable. Name a migrated single account `default` to keep its existing idempotency records effective.
+- Names, AppIDs, and relay tokens must be unique. Each `relayToken` follows the same strength rules as `RELAY_TOKEN`.
+- Setting both `WECHAT_ACCOUNTS_FILE` and any legacy credential variable is rejected. So are unknown fields, invalid JSON, and files over 64 KiB; errors never echo the file's contents.
+- Clients keep using the same routes and headers; they only send their own account's token. Every account's AppID must allowlist the relay's fixed IPv4.
 
 ## Production deployment
 

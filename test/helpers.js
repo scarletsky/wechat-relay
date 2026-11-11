@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 export function testConfig(overrides = {}) {
-  return {
+  const config = {
     appId: "test-app-id",
     appSecret: "test-app-secret",
     relayToken: "r".repeat(48),
@@ -23,6 +23,15 @@ export function testConfig(overrides = {}) {
     idempotencyFailedSafeRetentionMs: 7 * 24 * 60 * 60 * 1_000,
     ...overrides,
   };
+  return {
+    accounts: [{
+      name: "default",
+      appId: config.appId,
+      appSecret: config.appSecret,
+      relayToken: config.relayToken,
+    }],
+    ...config,
+  };
 }
 
 export function jsonResponse(payload, init = {}) {
@@ -32,9 +41,9 @@ export function jsonResponse(payload, init = {}) {
   });
 }
 
-export function authHeaders(config, extra = {}) {
+export function authHeaders(config, extra = {}, relayToken = config.relayToken) {
   return {
-    Authorization: `Bearer ${config.relayToken}`,
+    Authorization: `Bearer ${relayToken}`,
     ...extra,
   };
 }

@@ -16,11 +16,12 @@ Include the affected revision, route, preconditions, impact, and a minimal redac
 
 ## Security invariants
 
-- Startup fails when any required secret is absent or the relay token is shorter than 32 bytes.
+- Startup fails when any required secret is absent or the relay token is shorter than 32 bytes. With several accounts, startup also fails on an unreadable, malformed, or oversized accounts file, on unknown fields, and on a repeated account name, AppID, or relay token.
+- Each relay token is bound to exactly one Official Account. A request can use only the account that owns its token.
 - The Node service binds only to loopback. Network exposure belongs to an explicitly configured Tailscale Serve or Caddy boundary.
 - Only the six exact routes in [docs/PROTOCOL.md](docs/PROTOCOL.md) exist; only four proxy to fixed WeChat API paths.
 - The client cannot select a host, scheme, arbitrary path, redirect target, or arbitrary query parameter.
-- Authentication uses a constant-size digest and `crypto.timingSafeEqual`.
+- Authentication uses a constant-size digest and `crypto.timingSafeEqual`, compared against every configured account so timing does not reveal which account matched.
 - Body, header, response, total upstream-operation time (including token refresh/retry), rate, and concurrency bounds fail closed; rejected unread bodies close their connection. Anonymous abuse and authenticated operations use separate rate buckets so an outsider cannot consume the trusted client's quota.
 - Access tokens never leave process memory.
 - SQLite stores only a domain-separated digest of the idempotency key and never stores the caller's raw key, request/response bodies, article text, images, titles, access tokens, app credentials, or media identifiers.
@@ -33,7 +34,8 @@ Include the affected revision, route, preconditions, impact, and a minimal redac
 
 - Generate `RELAY_TOKEN` from at least 32 cryptographically random bytes (43+ base64/base64url characters or 64+ hex characters) and rotate it after suspected exposure.
 - Use only an opaque UUID or content digest for `Idempotency-Key`; never encode article text or another secret in persistent metadata.
-- Keep the environment file root-readable only and outside the repository.
+- Keep the environment file and any accounts file root-readable only and outside the repository. Deliver the accounts file through systemd `LoadCredential=`, not a world-readable path.
+- Generate a separate relay token for each account; never share one token between accounts.
 - Use a dedicated fixed IPv4 in the WeChat allowlist.
 - Keep Tailscale ACLs or Caddy/firewall rules narrow. Never expose port 18794 directly.
 - Reconcile a draft in WeChat before changing an `outcome_unknown` idempotency record.

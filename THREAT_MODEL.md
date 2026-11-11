@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository runs one loopback-only Node.js service that authenticates a trusted client and forwards four fixed draft-related operations to `https://api.weixin.qq.com`. Its assets are the Official Account AppID/AppSecret, relay bearer token, in-memory WeChat access token, unpublished article/media content in transit, fixed-IP allowlist privilege, and idempotency decisions that prevent duplicate drafts.
+This repository runs one loopback-only Node.js service that authenticates a trusted client and forwards four fixed draft-related operations to `https://api.weixin.qq.com`. Its assets are the AppID/AppSecret of each configured Official Account, the per-account relay bearer tokens, in-memory WeChat access token, unpublished article/media content in transit, fixed-IP allowlist privilege, and idempotency decisions that prevent duplicate drafts.
 
 Primary runtime code is under `src/`. The systemd and reverse-proxy examples under `deploy/` define the production isolation boundary. Tests, documentation, and the local secret scanner are developer/operator surfaces and are not network services.
 
@@ -14,7 +14,7 @@ Primary runtime code is under `src/`. The systemd and reverse-proxy examples und
 2. **Network edge to Node process:** the edge connects to `127.0.0.1:18794`. `src/config.js` rejects non-loopback binding and `src/server.js` rejects non-loopback peers.
 3. **Node process to WeChat:** `src/wechat-client.js` selects a fixed HTTPS origin and four fixed upstream paths. Request bodies are attacker-controlled after authentication, but the upstream host/path is not.
 4. **Node process to local state:** `src/idempotency-store.js` writes only a domain-separated idempotency-key digest plus route/body-hash/stage metadata to a mode-0600 SQLite database. Raw caller keys, credentials, bodies, images, responses, and media identifiers never cross this boundary.
-5. **Operator to runtime configuration:** the root-only systemd environment file supplies three required secrets. Repository files, logs, service status, and public health output must not reveal them.
+5. **Operator to runtime configuration:** the root-only systemd environment file supplies the three legacy secrets, or a root-only JSON accounts file delivered through systemd `LoadCredential=` supplies one AppID/AppSecret/relay-token set per account. Repository files, logs, service status, and public health output must not reveal them.
 
 ### Inputs
 
@@ -37,7 +37,7 @@ An attacker may send oversized, slow, compressed, malformed, or high-rate reques
 
 ### Authentication and secret disclosure
 
-An attacker may guess a bearer token, submit ambiguous authentication headers, or try to make errors/logs echo secrets. `src/auth.js` accepts exactly one supported header and compares fixed-size SHA-256 digests with `timingSafeEqual`. `src/logger.js` serializes only allowlisted metadata. Public errors never use upstream URLs or internal exception messages. Startup rejects missing credentials and short tokens.
+An attacker may guess a bearer token, submit ambiguous authentication headers, or try to make errors/logs echo secrets. `src/auth.js` accepts exactly one supported header and compares fixed-size SHA-256 digests with `timingSafeEqual` against every configured account. Each token selects exactly one account, so a stolen token cannot act on another account, and idempotency keys are namespaced per account. `src/logger.js` serializes only allowlisted metadata. Public errors never use upstream URLs or internal exception messages. Startup rejects missing credentials and short tokens.
 
 ### SSRF and confused-deputy abuse
 

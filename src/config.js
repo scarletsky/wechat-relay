@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import fs from "node:fs";
 import path from "node:path";
 import { ConfigurationError } from "./errors.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
+const LEGACY_CREDENTIAL_NAMES = ["WECHAT_APP_ID", "WECHAT_APP_SECRET", "RELAY_TOKEN"];
+const ACCOUNT_FIELDS = new Set(["name", "appId", "appSecret", "relayToken"]);
+const ACCOUNT_NAME_PATTERN = /^[a-z0-9_-]{1,32}$/u;
+const MAX_ACCOUNTS_FILE_BYTES = 64 * 1024;
+// The single account built from the legacy environment variables. Its
+// idempotency keys are stored without an account prefix, so naming a migrated
+// account "default" keeps replay protection for existing records.
+export const LEGACY_ACCOUNT_NAME = "default";
 // Supported Node.js major -> minimum minor release. better-sqlite3 13 requires
 // Node-API 10, which Node.js 22 provides only from 22.14.0.
 const SUPPORTED_NODE_MINIMUM_MINORS = new Map([
@@ -44,11 +53,11 @@ function boundedInteger(env, name, fallback, minimum, maximum) {
   return value;
 }
 
-function validateRelayToken(token) {
+function validateRelayToken(token, label = "RELAY_TOKEN") {
   if (!/^[A-Za-z0-9._~+/=-]+$/u.test(token)) {
     throw new ConfigurationError(
       "invalid_RELAY_TOKEN",
-      "RELAY_TOKEN must use visible ASCII base64, base64url, hex, or equivalent token characters.",
+      `${label} must use visible ASCII base64, base64url, hex, or equivalent token characters.`,
     );
   }
   const byteLength = Buffer.byteLength(token, "utf8");
@@ -56,17 +65,104 @@ function validateRelayToken(token) {
   if (byteLength < minimumEncodedLength || byteLength > 512) {
     throw new ConfigurationError(
       "invalid_RELAY_TOKEN_length",
-      "RELAY_TOKEN must encode at least 32 random bytes (43 base64/base64url characters or 64 hex characters) and be at most 512 characters.",
+      `${label} must encode at least 32 random bytes (43 base64/base64url characters or 64 hex characters) and be at most 512 characters.`,
     );
   }
 }
 
-export function loadConfig(env = process.env) {
-  assertSupportedNodeVersion();
+function legacyAccount(env) {
   const appId = required(env, "WECHAT_APP_ID");
   const appSecret = required(env, "WECHAT_APP_SECRET");
   const relayToken = required(env, "RELAY_TOKEN");
   validateRelayToken(relayToken);
+  return Object.freeze({ name: LEGACY_ACCOUNT_NAME, appId, appSecret, relayToken });
+}
+
+function readAccountsFile(filename) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filename);
+  } catch {
+    throw new ConfigurationError(
+      "unreadable_WECHAT_ACCOUNTS_FILE",
+      "WECHAT_ACCOUNTS_FILE could not be read.",
+    );
+  }
+  if (raw.length > MAX_ACCOUNTS_FILE_BYTES) {
+    throw new ConfigurationError(
+      "invalid_WECHAT_ACCOUNTS_FILE_size",
+      `WECHAT_ACCOUNTS_FILE must be at most ${MAX_ACCOUNTS_FILE_BYTES} bytes.`,
+    );
+  }
+  try {
+    // Never echo parser messages: they may quote fragments of a secret.
+    return JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new ConfigurationError(
+      "invalid_WECHAT_ACCOUNTS_FILE",
+      "WECHAT_ACCOUNTS_FILE must contain valid JSON.",
+    );
+  }
+}
+
+function parseAccounts(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ConfigurationError(
+      "invalid_WECHAT_ACCOUNTS_FILE",
+      "WECHAT_ACCOUNTS_FILE must contain a non-empty JSON array of accounts.",
+    );
+  }
+  const seen = { name: new Set(), appId: new Set(), relayToken: new Set() };
+  return value.map((entry, index) => {
+    const label = `Account #${index + 1}`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ConfigurationError("invalid_account", `${label} must be a JSON object.`);
+    }
+    for (const key of Object.keys(entry)) {
+      if (!ACCOUNT_FIELDS.has(key)) {
+        throw new ConfigurationError("unknown_account_field", `${label} has an unsupported field.`);
+      }
+    }
+    const account = {};
+    for (const field of ACCOUNT_FIELDS) {
+      const fieldValue = entry[field];
+      if (typeof fieldValue !== "string" || !fieldValue) {
+        throw new ConfigurationError(`missing_account_${field}`, `${label} requires a non-empty ${field}.`);
+      }
+      account[field] = fieldValue;
+    }
+    if (!ACCOUNT_NAME_PATTERN.test(account.name)) {
+      throw new ConfigurationError(
+        "invalid_account_name",
+        `${label} name must be 1-32 lowercase letters, digits, underscores, or hyphens.`,
+      );
+    }
+    validateRelayToken(account.relayToken, `${label} relayToken`);
+    for (const field of Object.keys(seen)) {
+      if (seen[field].has(account[field])) {
+        throw new ConfigurationError(`duplicate_account_${field}`, `${label} repeats another account's ${field}.`);
+      }
+      seen[field].add(account[field]);
+    }
+    return Object.freeze(account);
+  });
+}
+
+function loadAccounts(env) {
+  const accountsFile = String(env.WECHAT_ACCOUNTS_FILE ?? "").trim();
+  if (!accountsFile) return [legacyAccount(env)];
+  if (LEGACY_CREDENTIAL_NAMES.some((name) => String(env[name] ?? "").trim())) {
+    throw new ConfigurationError(
+      "ambiguous_account_config",
+      "Set either WECHAT_ACCOUNTS_FILE or WECHAT_APP_ID/WECHAT_APP_SECRET/RELAY_TOKEN, not both.",
+    );
+  }
+  return parseAccounts(readAccountsFile(accountsFile));
+}
+
+export function loadConfig(env = process.env) {
+  assertSupportedNodeVersion();
+  const accounts = Object.freeze(loadAccounts(env));
 
   const host = String(env.HOST ?? "").trim() || "127.0.0.1";
   if (!LOOPBACK_HOSTS.has(host)) {
@@ -82,9 +178,7 @@ export function loadConfig(env = process.env) {
   }
 
   return Object.freeze({
-    appId,
-    appSecret,
-    relayToken,
+    accounts,
     host,
     port: boundedInteger(env, "PORT", 18_794, 1_024, 65_535),
     dbPath: dbPathValue === ":memory:" ? dbPathValue : path.resolve(dbPathValue),

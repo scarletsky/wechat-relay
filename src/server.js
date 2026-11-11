@@ -11,7 +11,7 @@ import {
   validateContentType,
   validateJsonBody,
 } from "./body.js";
-import { isLoopbackAddress } from "./config.js";
+import { isLoopbackAddress, LEGACY_ACCOUNT_NAME } from "./config.js";
 import { HttpError, UpstreamError } from "./errors.js";
 import { IdempotencyStore } from "./idempotency-store.js";
 import { createJsonLogger } from "./logger.js";
@@ -61,6 +61,13 @@ function errorForIdempotency(result) {
   );
 }
 
+// Namespaces idempotency keys per account. Keys cannot contain NUL, so the
+// prefix is unambiguous; the legacy account keeps unprefixed keys so records
+// written before multi-account support still block replays.
+function accountIdempotencyKey(account, key) {
+  return account.name === LEGACY_ACCOUNT_NAME ? key : `${account.name}\0${key}`;
+}
+
 function errorPayload(error) {
   if (error instanceof HttpError) {
     return {
@@ -86,8 +93,8 @@ function errorPayload(error) {
   };
 }
 
-export function createRequestHandler({ config, store, wechat, logger }) {
-  const authenticate = createAuthenticator(config.relayToken);
+export function createRequestHandler({ config, store, wechatClients, logger }) {
+  const authenticate = createAuthenticator(config.accounts);
   const rateLimiter = new FixedWindowRateLimiter(
     config.rateLimitWindowMs,
     {
@@ -114,6 +121,7 @@ export function createRequestHandler({ config, store, wechat, logger }) {
     const requestId = randomUUID();
     const startedAt = Date.now();
     let routeId = "unresolved";
+    let accountName;
     let bodyBytes = 0;
     let idempotency = false;
     let responseStatus = 500;
@@ -140,12 +148,15 @@ export function createRequestHandler({ config, store, wechat, logger }) {
         return;
       }
 
+      let account;
       try {
-        authenticate(req);
+        account = authenticate(req);
       } catch (error) {
         enforceRateLimit("preauth", "preauth");
         throw error;
       }
+      accountName = account.name;
+      const wechat = wechatClients.get(account.name);
       enforceRateLimit("authenticated", "authenticated");
       if (route.kind === "ready") {
         assertNoBody(req);
@@ -174,8 +185,11 @@ export function createRequestHandler({ config, store, wechat, logger }) {
       }
 
       const contentType = validateContentType(req, route.contentKind);
-      const idempotencyKey = readIdempotencyKey(req, route.idempotency);
-      idempotency = Boolean(idempotencyKey);
+      const requestIdempotencyKey = readIdempotencyKey(req, route.idempotency);
+      idempotency = Boolean(requestIdempotencyKey);
+      const idempotencyKey = idempotency
+        ? accountIdempotencyKey(account, requestIdempotencyKey)
+        : "";
       const release = concurrency.tryAcquire();
       if (!release) {
         throw new HttpError(503, "upstream_busy", "Upstream concurrency limit reached.");
@@ -241,6 +255,7 @@ export function createRequestHandler({ config, store, wechat, logger }) {
         requestId,
         method: req.method,
         route: routeId,
+        account: accountName,
         status: responseStatus,
         durationMs: Date.now() - startedAt,
         bodyBytes,
@@ -257,8 +272,16 @@ export function createRelayService({ config, fetchImpl = fetch, logStream = proc
     maxRecords: config.idempotencyMaxRecords,
     failedSafeRetentionMs: config.idempotencyFailedSafeRetentionMs,
   });
-  const wechat = new WechatClient(config, fetchImpl);
-  const handler = createRequestHandler({ config, store, wechat, logger });
+  const wechatClients = new Map(config.accounts.map((account) => [
+    account.name,
+    new WechatClient({
+      appId: account.appId,
+      appSecret: account.appSecret,
+      upstreamTimeoutMs: config.upstreamTimeoutMs,
+      maxUpstreamResponseBytes: config.maxUpstreamResponseBytes,
+    }, fetchImpl),
+  ]));
+  const handler = createRequestHandler({ config, store, wechatClients, logger });
   const server = http.createServer(
     {
       maxHeaderSize: 16 * 1024,
@@ -279,7 +302,7 @@ export function createRelayService({ config, fetchImpl = fetch, logStream = proc
   return {
     server,
     store,
-    wechat,
+    wechatClients,
     logger,
     async listen() {
       await new Promise((resolve, reject) => {
@@ -293,7 +316,7 @@ export function createRelayService({ config, fetchImpl = fetch, logStream = proc
       return server.address();
     },
     async close() {
-      wechat.clearSecrets();
+      for (const wechat of wechatClients.values()) wechat.clearSecrets();
       if (server.listening) {
         await new Promise((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));

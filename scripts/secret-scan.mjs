@@ -38,7 +38,7 @@ export function scanText(content) {
   if (/\bAuthorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]{32,}/iu.test(content)) {
     rules.push("literal-bearer-token");
   }
-  if (/["'](?:access_token|WECHAT_APP_SECRET|RELAY_TOKEN)["']\s*:\s*["'][A-Za-z0-9._~+/=-]{24,}["']/iu.test(content)) {
+  if (/["'](?:access_token|WECHAT_APP_SECRET|RELAY_TOKEN|appSecret|relayToken)["']\s*:\s*["'][A-Za-z0-9._~+/=-]{24,}["']/iu.test(content)) {
     rules.push("literal-secret-field");
   }
   if (/\/(?:Users|home)\/[A-Za-z0-9._-]+\//u.test(content) || /[A-Za-z]:\\Users\\[^\\]+\\/iu.test(content)) {

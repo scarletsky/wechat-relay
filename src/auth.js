@@ -25,9 +25,10 @@ function singleHeader(req, name) {
   };
 }
 
-export function createAuthenticator(expectedToken) {
-  const expectedDigest = digest(expectedToken);
+export function createAuthenticator(accounts) {
+  const entries = accounts.map((account) => ({ account, digest: digest(account.relayToken) }));
 
+  // Returns the account whose relay token matches the request.
   return function authenticate(req) {
     const authorization = singleHeader(req, "authorization");
     const legacyToken = singleHeader(req, "x-relay-token");
@@ -50,7 +51,12 @@ export function createAuthenticator(expectedToken) {
     }
 
     const candidateDigest = digest(candidate);
-    if (!candidate || !timingSafeEqual(candidateDigest, expectedDigest)) {
+    // Compare against every account so timing does not reveal which one matched.
+    let matched = null;
+    for (const entry of entries) {
+      if (timingSafeEqual(candidateDigest, entry.digest)) matched = entry.account;
+    }
+    if (!candidate || !matched) {
       throw new HttpError(
         401,
         "unauthorized",
@@ -58,5 +64,6 @@ export function createAuthenticator(expectedToken) {
         { "WWW-Authenticate": "Bearer realm=\"wechat-relay\"" },
       );
     }
+    return matched;
   };
 }

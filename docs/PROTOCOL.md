@@ -9,6 +9,7 @@
   - `Authorization: Bearer <RELAY_TOKEN>` (preferred)
   - `X-Relay-Token: <RELAY_TOKEN>` (legacy compatibility)
 - Supplying both authentication headers is rejected.
+- When the relay serves several Official Accounts, each account has its own relay token. The token selects the account; there is no account header or path segment.
 
 ## Health and readiness
 
@@ -22,7 +23,7 @@ Public liveness check. It performs no WeChat request and returns only:
 
 ### `GET /v1/ready`
 
-Authenticated readiness check. It verifies SQLite and obtains or reuses an in-memory WeChat access token. Success returns:
+Authenticated readiness check. It verifies SQLite and obtains or reuses an in-memory WeChat access token for the account that owns the presented token. Success returns:
 
 ```json
 {"ready":true}
