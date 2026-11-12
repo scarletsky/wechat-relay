@@ -13,7 +13,7 @@
 
 ## Development
 
-Use a supported Node.js release (22.x from 22.14.0, or 24.x) and the exact
+Use a supported Node.js release (22.x from 22.14.0, 24.x, or 26.x) and the exact
 lockfile:
 
 ```bash

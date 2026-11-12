@@ -21,11 +21,12 @@ jobs:
       fail-fast: false
       matrix:
         # Keep in sync with package.json engines and src/config.js: the exact
-        # 22.x minimum, plus the current 22.x and 24.x releases.
+        # 22.x minimum, plus the current 22.x, 24.x, and 26.x releases.
         node-version:
           - "22.14.0"
           - "22.x"
           - "24.x"
+          - "26.x"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

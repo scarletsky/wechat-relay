@@ -150,8 +150,8 @@ test("configuration rejects non-loopback binding", () => {
   assert.equal(loadConfig({ ...validEnv(), HOST: "::1" }).host, "::1");
 });
 
-test("runtime accepts only Node 22.14+ and 24.x", () => {
-  for (const version of ["22.14.0", "22.22.0", "24.0.0", "24.14.1"]) {
+test("runtime accepts only Node 22.14+, 24.x, and 26.x", () => {
+  for (const version of ["22.14.0", "22.22.0", "24.0.0", "24.14.1", "26.0.0", "26.13.1"]) {
     assert.doesNotThrow(() => assertSupportedNodeVersion(version), version);
   }
   for (const version of [
@@ -162,6 +162,7 @@ test("runtime accepts only Node 22.14+ and 24.x", () => {
     "22.13.1",
     "23.11.1",
     "25.0.0",
+    "27.0.0",
     "22",
     "invalid",
   ]) {

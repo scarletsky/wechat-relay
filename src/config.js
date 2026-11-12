@@ -18,6 +18,7 @@ export const LEGACY_ACCOUNT_NAME = "default";
 const SUPPORTED_NODE_MINIMUM_MINORS = new Map([
   [22, 14],
   [24, 0],
+  [26, 0],
 ]);
 
 export function assertSupportedNodeVersion(version = process.versions.node) {
@@ -28,7 +29,7 @@ export function assertSupportedNodeVersion(version = process.versions.node) {
   if (minimumMinor === undefined || !(minor >= minimumMinor)) {
     throw new ConfigurationError(
       "unsupported_NODE_VERSION",
-      "Node.js version must be 22.14.0 or a later 22.x release, or 24.x.",
+      "Node.js version must be 22.14.0 or a later 22.x release, 24.x, or 26.x.",
     );
   }
 }
