@@ -85,6 +85,9 @@ export class WechatClient {
       const data = await readBoundedJson(response, this.maximumResponseBytes, outcomeUnknown);
       return { status: response.status, data };
     } catch (error) {
+      // Release the connection: an unread response body otherwise keeps it
+      // open until garbage collection, and the timer below is cleared.
+      controller.abort();
       if (error instanceof UpstreamError) throw error;
       const timeout = error?.name === "AbortError";
       throw new UpstreamError(

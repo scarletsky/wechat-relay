@@ -108,3 +108,17 @@ test("oversized upstream JSON is rejected without exposing its content", async (
   ));
   await assert.rejects(client.ensureReady(), { code: "upstream_response_too_large" });
 });
+
+test("rejected upstream responses abort the request to release the connection", async () => {
+  const config = testConfig({ maxUpstreamResponseBytes: 32 });
+  let signal;
+  const client = new WechatClient(config, async (_url, options) => {
+    signal = options.signal;
+    return jsonResponse(
+      { access_token: "x".repeat(100), expires_in: 7_200 },
+      { headers: { "Content-Length": "200" } },
+    );
+  });
+  await assert.rejects(client.ensureReady(), { code: "upstream_response_too_large" });
+  assert.equal(signal.aborted, true);
+});
