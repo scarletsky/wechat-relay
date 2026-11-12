@@ -22,7 +22,7 @@ Include the affected revision, route, preconditions, impact, and a minimal redac
 - Only the six exact routes in [docs/PROTOCOL.md](docs/PROTOCOL.md) exist; only four proxy to fixed WeChat API paths.
 - The client cannot select a host, scheme, arbitrary path, redirect target, or arbitrary query parameter.
 - Authentication uses a constant-size digest and `crypto.timingSafeEqual`, compared against every configured account so timing does not reveal which account matched.
-- Body, header, response, total upstream-operation time (including token refresh/retry), rate, and concurrency bounds fail closed; rejected unread bodies close their connection. Anonymous abuse and authenticated operations use separate rate buckets so an outsider cannot consume the trusted client's quota.
+- Body, header, response, total upstream-operation time (including token refresh/retry), rate, and concurrency bounds fail closed; rejected unread bodies close their connection. Anonymous abuse and authenticated operations use separate rate buckets so an outsider cannot consume the trusted client's quota. Each account has its own authenticated bucket; concurrency and idempotency capacity are shared by all accounts.
 - Access tokens never leave process memory.
 - SQLite stores only a domain-separated digest of the idempotency key and never stores the caller's raw key, request/response bodies, article text, images, titles, access tokens, app credentials, or media identifiers.
 - Logs never contain credentials, authentication headers, bodies, titles, upstream URLs, access tokens, or media identifiers.

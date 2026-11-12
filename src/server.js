@@ -157,7 +157,8 @@ export function createRequestHandler({ config, store, wechatClients, logger }) {
       }
       accountName = account.name;
       const wechat = wechatClients.get(account.name);
-      enforceRateLimit("authenticated", "authenticated");
+      // Each account gets its own quota, matching WeChat's per-AppID quotas.
+      enforceRateLimit(`authenticated:${account.name}`, "authenticated");
       if (route.kind === "ready") {
         assertNoBody(req);
         const release = concurrency.tryAcquire();

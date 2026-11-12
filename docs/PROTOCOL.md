@@ -59,7 +59,7 @@ The relay intentionally does not persist the WeChat response or media identifier
 
 ### Capacity and retention
 
-The metadata table is capped at `IDEMPOTENCY_MAX_RECORDS` (default 10,000; configurable from 100 to 100,000). On every new reservation and readiness check, `failed_safe` rows older than `IDEMPOTENCY_FAILED_SAFE_RETENTION_MS` are reclaimed (default seven days; configurable from one minute to 30 days).
+The metadata table is capped at `IDEMPOTENCY_MAX_RECORDS` (default 10,000; configurable from 100 to 100,000), shared by all accounts. On every new reservation and readiness check, `failed_safe` rows older than `IDEMPOTENCY_FAILED_SAFE_RETENTION_MS` are reclaimed (default seven days; configurable from one minute to 30 days).
 
 `completed`, `forwarding`, and `outcome_unknown` rows are protected and never evicted automatically. If protected rows fill the table, new draft reservations and readiness fail with `503 idempotency_capacity_exhausted`; existing keys still return their conflict or replay-blocked decision. This bounds storage without weakening uncertain-outcome replay protection. The database uses WAL auto-checkpointing and a journal-size limit, and deleted pages are reused by SQLite.
 

@@ -78,6 +78,7 @@ Without `WECHAT_ACCOUNTS_FILE`, the three legacy variables define one account na
 - Names, AppIDs, and relay tokens must be unique. Each `relayToken` follows the same strength rules as `RELAY_TOKEN`.
 - Setting both `WECHAT_ACCOUNTS_FILE` and any legacy credential variable is rejected. So are unknown fields, invalid JSON, and files over 64 KiB; errors never echo the file's contents.
 - Clients keep using the same routes and headers; they only send their own account's token. Every account's AppID must allowlist the relay's fixed IPv4.
+- `RATE_LIMIT_MAX_REQUESTS` applies to each account separately, like WeChat's per-AppID quotas. All accounts share the pre-authentication limit, `MAX_CONCURRENT_UPSTREAM`, and `IDEMPOTENCY_MAX_RECORDS`, so treat every token holder as trusted. Run a separate relay instance per account when accounts need strict isolation.
 
 ## Production deployment
 

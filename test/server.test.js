@@ -366,6 +366,27 @@ test("early authentication rejection closes an unread streamed body", async (t) 
   assert.deepEqual(result, { statusCode: 401, connection: "close" });
 });
 
+test("one account exhausting its quota does not rate-limit another account", async (t) => {
+  const mainToken = "m".repeat(48);
+  const blogToken = "q".repeat(48);
+  const fixture = await withService(t, {
+    config: {
+      rateLimitMaxRequests: 1,
+      accounts: [
+        { name: "main", appId: "main-app-id", appSecret: "main-app-secret", relayToken: mainToken },
+        { name: "blog", appId: "blog-app-id", appSecret: "blog-app-secret", relayToken: blogToken },
+      ],
+    },
+  });
+  const ready = (relayToken) => fetch(`${fixture.baseUrl}/v1/ready`, {
+    headers: authHeaders(fixture.config, {}, relayToken),
+  });
+  assert.equal((await ready(mainToken)).status, 200);
+  assert.equal((await ready(mainToken)).status, 429);
+  assert.equal((await ready(blogToken)).status, 200);
+  assert.equal((await ready(blogToken)).status, 429);
+});
+
 test("each relay token routes to its own Official Account", async (t) => {
   const mainToken = "m".repeat(48);
   const blogToken = "q".repeat(48);
